@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package api.marketdata.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "api/marketdata/v1;marketdata";
+
+// MarketDataService manages historical tick replay and real-time streaming feeds.
+service MarketDataService {
+  // StreamMarketData fires a highly optimized, high-throughput stream of market ticks
+  // or candlesticks to subscribing strategy agents.
+  rpc StreamMarketData(StreamMarketDataRequest) returns (stream StreamMarketDataResponse);
+  // GetHistoricalSnapshot provides a unary fallback to fetch an isolated window of data,
+  // perfect for warming up indicators or caching historical states.
+  rpc GetHistoricalSnapshot(GetHistoricalSnapshotRequest) returns (GetHistoricalSnapshotResponse);
+}
+
+// DataResolution defines the granularity of the data requested.
+enum DataResolution {
+  DATA_RESOLUTION_UNSPECIFIED = 0;
+  DATA_RESOLUTION_TICK = 1; // Every single trade/quote event
+  DATA_RESOLUTION_1_MIN = 2; // 1-minute aggregated bar
+  DATA_RESOLUTION_5_MIN = 3; // 5-minute aggregated bar
+  DATA_RESOLUTION_1_HOUR = 4; // 1-hour aggregated bar
+  DATA_RESOLUTION_1_DAY = 5; // Daily bar
+}
+
+message StreamMarketDataRequest {
+  string session_id = 1; // Unique identifier for the simulation run
+  repeated string symbols = 2; // e.g., ["AAPL", "BTCUSD", "GOOG"]
+  DataResolution resolution = 3; // Resolution of data to stream
+
+  google.protobuf.Timestamp start_time = 4;
+  google.protobuf.Timestamp end_time = 5;
+
+  // Simulated playback speed multiplier (e.g., 1.0 = real-time, 10.0 = ten times faster).
+  // This lets your Go backend know how long to sleep between pushing stream packets.
+  float playback_speed_multiplier = 6;
+}
+
+// TickData represents sub-millisecond Level 1 order book trades
+message TickData {
+  double bid_price = 1;
+  double ask_price = 2;
+  uint32 bid_size = 3;
+  uint32 ask_size = 4;
+  double last_trade_price = 5;
+  uint32 last_trade_size = 6;
+}
+
+// BarData represents classic Open-High-Low-Close financial candles
+message BarData {
+  double open = 1;
+  double high = 2;
+  double low = 3;
+  double close = 4;
+  uint64 volume = 5;
+  double vwap = 6; // Volume-Weighted Average Price
+}
+
+message StreamMarketDataResponse {
+  string symbol = 1;
+  uint64 sequence_number = 2; // Strict monotonic ordering index to catch missing packets
+  google.protobuf.Timestamp timestamp = 3;
+
+  // Utilizing proto3's 'oneof' feature optimizes wire size. A response payload
+  // can contain a single microscopic raw tick OR an aggregated OHLC candlestick bar.
+  oneof payload {
+    TickData tick = 4;
+    BarData bar = 5;
+  }
+}
+
+message GetHistoricalSnapshotRequest {
+  string symbol = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  DataResolution resolution = 4;
+}
+
+message GetHistoricalSnapshotResponse {
+  string symbol = 1;
+  repeated BarData bars = 2; // Unary arrays are completely fine for minor snapshots
+}

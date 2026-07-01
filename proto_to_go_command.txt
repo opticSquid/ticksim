@@ -1,0 +1,2 @@
+// run from project root
+protoc --go_out=. ./api/marketdata/v1/market_data.proto
