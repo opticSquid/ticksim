@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package api.strategy.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/opticSquid/ticksim/strategy/v1;strategy";
+
+// StrategyService handles the administrative control plane of running trading strategies.
+service StrategyService {
+  // Unary: Dynamically updates the risk or mathematical thresholds of a running strategy agent.
+  rpc UpdateStrategyConfig(UpdateStrategyConfigRequest) returns (UpdateStrategyConfigResponse);
+
+  // Unary: Requests the current runtime state, parameters, and asset exposure of an agent.
+  rpc GetStrategyState(GetStrategyStateRequest) returns (GetStrategyStateResponse);
+}
+
+// Supported algorithmic types running inside the Go worker framework
+enum StrategyType {
+  STRATEGY_TYPE_UNSPECIFIED = 0;
+  STRATEGY_TYPE_MOVING_AVERAGE_CROSSOVER = 1;
+  STRATEGY_TYPE_MEAN_REVERSION = 2;
+  STRATEGY_TYPE_MOMENTUM = 3;
+}
+
+// Current status of the agent's internal evaluation loop
+enum StrategyStatus {
+  STRATEGY_STATUS_UNSPECIFIED = 0;
+  STRATEGY_STATUS_IDLE = 1;
+  STRATEGY_STATUS_RUNNING = 2;
+  STRATEGY_STATUS_PAUSED = 3;
+  STRATEGY_STATUS_ERROR = 4;
+}
+
+message StrategyConfig {
+  string strategy_id = 1;
+  StrategyType type = 2;
+
+  // Risk control limits
+  double max_position_size = 3; // Maximum allowable quantity per symbol
+  double stop_loss_percentage = 4; // Hard exit trigger limit (e.g., 0.02 for 2%)
+  double take_profit_percentage = 5; // Target profit exit threshold
+
+  // Flexible map for hyperparameters (e.g., short_window: "50", long_window: "200")
+  map<string, string> parameters = 6;
+}
+
+message UpdateStrategyConfigRequest {
+  string session_id = 1;
+  StrategyConfig new_config = 2;
+}
+
+message UpdateStrategyConfigResponse {
+  bool success = 1;
+  string message = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+message GetStrategyStateRequest {
+  string session_id = 1;
+  string strategy_id = 2;
+}
+
+message GetStrategyStateResponse {
+  string strategy_id = 1;
+  StrategyStatus status = 2;
+  StrategyConfig current_config = 3;
+
+  // Real-time calculated evaluation telemetry
+  double total_pnl = 4; // Current Profit and Loss
+  int64 total_trades_executed = 5;
+
+  // Current open exposures managed by this agent (Symbol -> Current Net Quantity)
+  map<string, double> active_positions = 6;
+
+  google.protobuf.Timestamp status_checked_at = 7;
+}

@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package api.execution.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/opticSquid/ticksim/execution/v1;execution";
+
+// The ExecutionService mimics an exchange matching engine (e.g., Nasdaq/Binance).
+service ExecutionService {
+  // Client Streaming: StrategyAgent streams batches of orders into the engine's
+  // in-memory order book and receives an aggregated execution report back.
+  rpc SubmitOrderBatch(stream SubmitOrderRequest) returns (BatchExecutionReport);
+
+  // Unary: Fetches the current state of an account balance or asset inventory.
+  rpc GetAccountState(AccountStateRequest) returns (AccountStateResponse);
+}
+
+// Enum defining the current lifecycle state of an order.
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING = 1;
+  ORDER_STATUS_PARTIALLY_FILLED = 2;
+  ORDER_STATUS_FILLED = 3;
+  ORDER_STATUS_CANCELED = 4;
+  ORDER_STATUS_REJECTED = 5;
+}
+
+// Enum defining the action type of the order request.
+enum OrderAction {
+  ORDER_ACTION_UNSPECIFIED = 0;
+  ORDER_ACTION_BUY = 1;
+  ORDER_ACTION_SELL = 2;
+}
+
+// Enum defining execution priority or rules.
+enum OrderType {
+  ORDER_TYPE_UNSPECIFIED = 0;
+  ORDER_TYPE_MARKET = 1; // Execute immediately at whatever price is available
+  ORDER_TYPE_LIMIT = 2; // Execute only at the specified price or better
+}
+
+// Individual order details streamed from the Strategy Agent.
+message SubmitOrderRequest {
+  string session_id = 1; // Links the execution to a specific backtest run
+  string order_id = 2; // Unique client-side generated UUID
+  string symbol = 3; // E.g., "ADANIPORTS", "ETERNAL"
+  OrderAction action = 4; // BUY or SELL
+  OrderType type = 5; // MARKET or LIMIT
+  double quantity = 6; // Number of shares/tokens to trade
+  double limit_price = 7; // Only evaluated if type = ORDER_TYPE_LIMIT
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// Summary of individual transactions executed inside the matching engine.
+message OrderExecutionReceipt {
+  string order_id = 1;
+  string symbol = 2;
+  OrderStatus status = 3;
+  double requested_quantity = 4;
+  double filled_quantity = 5;
+  double average_execution_price = 6; // Accounts for simulated slippage
+  double transaction_fees = 7; // Simulates exchange overhead costs
+  string rejection_reason = 8; // Populated if status = ORDER_STATUS_REJECTED
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+// The final server response returned once the client stream terminates.
+message BatchExecutionReport {
+  string session_id = 1;
+  uint32 total_orders_processed = 2;
+  uint32 successful_fills = 3;
+  double total_volume_executed = 4;
+  double total_fees_incurred = 5;
+  // A list of receipts containing details for every processed transaction in the batch
+  repeated OrderExecutionReceipt receipts = 6;
+}
+
+// Request payload to check account balances.
+message AccountStateRequest {
+  string account_id = 1;
+  string session_id = 2;
+}
+
+// Response payload holding real-time balance metrics.
+message AccountStateResponse {
+  string account_id = 1;
+  double available_cash = 2; // Simulated fiat/base currency balance
+  // Map tracking held assets -> quantity (e.g., {"ADANIPORTS": 150.0, "ETERNAL": 45.0})
+  map<string, double> positions = 3;
+}
