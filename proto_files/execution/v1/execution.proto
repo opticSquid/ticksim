@@ -4,7 +4,7 @@ package api.execution.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/opticSquid/ticksim/execution/v1;execution";
+option go_package = "github.com/opticSquid/ticksim/gen/execution/v1;execution";
 
 // The ExecutionService mimics an exchange matching engine (e.g., Nasdaq/Binance).
 service ExecutionService {

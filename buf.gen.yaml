@@ -1,12 +1,18 @@
 version: v2
 plugins:
   - remote: buf.build/protocolbuffers/go
-    out: .
+    out: gen
     opt: paths=source_relative
   - remote: buf.build/connectrpc/gosimple
     out: gen
     opt:
       - paths=source_relative
       - simple
+  # Incase we do not want to use connectrpc we can use this but it requires code changes
+  # - remote: buf.build/grpc/go
+  #   out: gen2
+  #   opt:
+  #     - paths=source_relative
+  # # grpc/go depends on protocolbuffers/go
 inputs:
   - directory: proto_files

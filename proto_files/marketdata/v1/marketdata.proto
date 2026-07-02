@@ -4,7 +4,7 @@ package api.marketdata.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/opticSquid/ticksim/marketdata/v1;marketdata";
+option go_package = "github.com/opticSquid/ticksim/gen/marketdata/v1;marketdata";
 
 // MarketDataService manages historical tick replay and real-time streaming feeds.
 service MarketDataService {

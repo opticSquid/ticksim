@@ -4,7 +4,7 @@ package api.strategy.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/opticSquid/ticksim/strategy/v1;strategy";
+option go_package = "github.com/opticSquid/ticksim/gen/strategy/v1;strategy";
 
 // StrategyService handles the administrative control plane of running trading strategies.
 service StrategyService {

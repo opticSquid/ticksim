@@ -7,7 +7,7 @@ proto-check:
 	@echo "No errors found"
 
 ## proto: Generate Go files from Protobuf definitions using Buf
-proto:
+proto-gen:
 	@echo "Generating Protobuf code via Buf..."
 	@buf generate
 
