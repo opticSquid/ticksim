@@ -8,7 +8,7 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	v1 "github.com/opticSquid/ticksim/execution/v1"
+	v1 "github.com/opticSquid/ticksim/gen/execution/v1"
 	http "net/http"
 	strings "strings"
 )
