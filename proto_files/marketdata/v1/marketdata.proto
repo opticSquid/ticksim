@@ -31,8 +31,10 @@ message StreamMarketDataRequest {
   repeated string symbols = 2; // e.g., ["AAPL", "BTCUSD", "GOOG"]
   DataResolution resolution = 3; // Resolution of data to stream
 
-  google.protobuf.Timestamp start_time = 4;
-  google.protobuf.Timestamp end_time = 5;
+  // both of these ranges are excluded while filtering the data
+  // you will only get data of what falls between these dates
+  google.protobuf.Timestamp start_date = 4;
+  google.protobuf.Timestamp end_date = 5;
 
   // Simulated playback speed multiplier (e.g., 1.0 = real-time, 10.0 = ten times faster).
   // This lets your Go backend know how long to sleep between pushing stream packets.

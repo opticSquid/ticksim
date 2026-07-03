@@ -1,6 +1,10 @@
-package main
+package marketdataserver
 
-import "time"
+import (
+	"time"
+
+	"github.com/opticSquid/ticksim/gen/marketdata/v1/marketdataconnect"
+)
 
 // Internal structure representing a row in your specific Indian NSE CSV format
 type DailyBar struct {
@@ -17,5 +21,7 @@ type DailyBar struct {
 }
 
 type MarketDataServer struct {
-	baseDataPath string
+	// Optional embedding for forward-compatibility
+	marketdataconnect.UnimplementedMarketDataServiceHandler
+	BaseDataPath string
 }

@@ -86,8 +86,10 @@ type StreamMarketDataRequest struct {
 	SessionId  string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`                         // Unique identifier for the simulation run
 	Symbols    []string               `protobuf:"bytes,2,rep,name=symbols,proto3" json:"symbols,omitempty"`                                              // e.g., ["AAPL", "BTCUSD", "GOOG"]
 	Resolution DataResolution         `protobuf:"varint,3,opt,name=resolution,proto3,enum=api.marketdata.v1.DataResolution" json:"resolution,omitempty"` // Resolution of data to stream
-	StartTime  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
-	EndTime    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
+	// both of these ranges are excluded while filtering the data
+	// you will only get data of what falls between these dates
+	StartDate *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty"`
+	EndDate   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty"`
 	// Simulated playback speed multiplier (e.g., 1.0 = real-time, 10.0 = ten times faster).
 	// This lets your Go backend know how long to sleep between pushing stream packets.
 	PlaybackSpeedMultiplier float32 `protobuf:"fixed32,6,opt,name=playback_speed_multiplier,json=playbackSpeedMultiplier,proto3" json:"playback_speed_multiplier,omitempty"`
@@ -146,16 +148,16 @@ func (x *StreamMarketDataRequest) GetResolution() DataResolution {
 	return DataResolution_DATA_RESOLUTION_UNSPECIFIED
 }
 
-func (x *StreamMarketDataRequest) GetStartTime() *timestamppb.Timestamp {
+func (x *StreamMarketDataRequest) GetStartDate() *timestamppb.Timestamp {
 	if x != nil {
-		return x.StartTime
+		return x.StartDate
 	}
 	return nil
 }
 
-func (x *StreamMarketDataRequest) GetEndTime() *timestamppb.Timestamp {
+func (x *StreamMarketDataRequest) GetEndDate() *timestamppb.Timestamp {
 	if x != nil {
-		return x.EndTime
+		return x.EndDate
 	}
 	return nil
 }
@@ -579,8 +581,8 @@ const file_marketdata_v1_marketdata_proto_rawDesc = "" +
 	"resolution\x18\x03 \x01(\x0e2!.api.marketdata.v1.DataResolutionR\n" +
 	"resolution\x129\n" +
 	"\n" +
-	"start_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\x125\n" +
-	"\bend_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\aendTime\x12:\n" +
+	"start_date\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tstartDate\x125\n" +
+	"\bend_date\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\aendDate\x12:\n" +
 	"\x19playback_speed_multiplier\x18\x06 \x01(\x02R\x17playbackSpeedMultiplier\"\xcc\x01\n" +
 	"\bTickData\x12\x1b\n" +
 	"\tbid_price\x18\x01 \x01(\x01R\bbidPrice\x12\x1b\n" +
@@ -651,8 +653,8 @@ var file_marketdata_v1_marketdata_proto_goTypes = []any{
 }
 var file_marketdata_v1_marketdata_proto_depIdxs = []int32{
 	0,  // 0: api.marketdata.v1.StreamMarketDataRequest.resolution:type_name -> api.marketdata.v1.DataResolution
-	7,  // 1: api.marketdata.v1.StreamMarketDataRequest.start_time:type_name -> google.protobuf.Timestamp
-	7,  // 2: api.marketdata.v1.StreamMarketDataRequest.end_time:type_name -> google.protobuf.Timestamp
+	7,  // 1: api.marketdata.v1.StreamMarketDataRequest.start_date:type_name -> google.protobuf.Timestamp
+	7,  // 2: api.marketdata.v1.StreamMarketDataRequest.end_date:type_name -> google.protobuf.Timestamp
 	7,  // 3: api.marketdata.v1.StreamMarketDataResponse.timestamp:type_name -> google.protobuf.Timestamp
 	2,  // 4: api.marketdata.v1.StreamMarketDataResponse.tick:type_name -> api.marketdata.v1.TickData
 	3,  // 5: api.marketdata.v1.StreamMarketDataResponse.bar:type_name -> api.marketdata.v1.BarData
