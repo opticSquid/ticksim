@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -20,77 +22,181 @@ import (
 
 func (s *MarketDataServer) StreamMarketData(ctx context.Context, req *pb.StreamMarketDataRequest, stream *connect.ServerStream[pb.StreamMarketDataResponse]) error {
 	symbols := req.Symbols
-	slog.Info("Starting real-time dynamic market data generation", "symbols", symbols)
-	startDate := req.StartDate
-	endDate := req.EndDate
+	slog.Info("Starting concurrent real-time market data generation with dynamic resolutions", "symbols", symbols)
 
-	// Initialize random seed for deterministic or variable noise matching your requirements
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	startDate := req.StartDate.AsTime()
+	endDate := req.EndDate.AsTime()
 
+	barChan := make(chan DailyBar, len(symbols)*5)
+	errChan := make(chan error, len(symbols))
+
+	var wg sync.WaitGroup
+
+	// Fan-out: Spawn a worker goroutine for each requested symbol
 	for _, symbol := range symbols {
-		symbol = strings.TrimSpace(symbol)
-		filepath := fmt.Sprintf("%s/01-07-2025-TO-01-07-2026-%s-ALL-N.csv", s.BaseDataPath, symbol)
+		wg.Add(1)
+		go func(sym string) {
+			defer wg.Done()
+			sym = strings.TrimSpace(sym)
+			filepath := fmt.Sprintf("%s/01-07-2025-TO-01-07-2026-%s-ALL-N.csv", s.BaseDataPath, sym)
 
-		dailyRecords, err := s.parseCSVAndFilter(filepath, symbol, startDate.AsTime(), endDate.AsTime())
-		if err != nil {
-			slog.Error("data parsing error", "symbol", symbol, "error", err)
-			return connect.NewError(connect.CodeNotFound, fmt.Errorf("data parsing failed for symbol %s", symbol))
+			if err := s.streamAndFilterCSV(ctx, filepath, sym, startDate, endDate, barChan); err != nil {
+				slog.Error("worker parsing error", "symbol", sym, "error", err)
+				errChan <- err
+			}
+		}(symbol)
+	}
+
+	go func() {
+		wg.Wait()
+		close(barChan)
+		close(errChan)
+	}()
+
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	var sequenceNumber uint64 = 1
+
+	// Fan-In / Consumer loop
+	for day := range barChan {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
-		// If a symbol registered later and has no entries inside the requested range,
-		// dailyRecords will be empty. It gracefully omits streaming for this symbol.
-		if len(dailyRecords) == 0 {
-			continue
+		// Establish market open and close timestamps in UTC
+		marketOpen := time.Date(day.Date.Year(), day.Date.Month(), day.Date.Day(), 3, 45, 0, 0, time.UTC)
+		marketClose := time.Date(day.Date.Year(), day.Date.Month(), day.Date.Day(), 10, 0, 0, 0, time.UTC)
+
+		// Determine internal processing and response structures based on payload requirements
+		var resolutionDuration time.Duration
+		var returnBar bool
+
+		switch req.Resolution {
+		case pb.DataResolution_DATA_RESOLUTION_1_MIN:
+			resolutionDuration = 1 * time.Minute
+			returnBar = true
+		case pb.DataResolution_DATA_RESOLUTION_5_MIN:
+			resolutionDuration = 5 * time.Minute
+			returnBar = true
+		case pb.DataResolution_DATA_RESOLUTION_1_HOUR:
+			resolutionDuration = 1 * time.Hour
+			returnBar = true
+		case pb.DataResolution_DATA_RESOLUTION_1_DAY:
+			resolutionDuration = 7 * time.Hour // Complete trading session (3:45 to 10:00 UTC is 6h15m)
+			returnBar = true
+		default:
+			resolutionDuration = 0 // Ticks do not aggregate across a duration window
+			returnBar = false
 		}
 
-		var sequenceNumber uint64 = 1
-		for _, day := range dailyRecords {
-			// Establish market open and close timestamps in UTC for this specific day
-			// 9:15 AM IST = 03:45 UTC | 3:30 PM IST = 10:00 UTC
-			marketOpen := time.Date(day.Date.Year(), day.Date.Month(), day.Date.Day(), 3, 45, 0, 0, time.UTC)
-			marketClose := time.Date(day.Date.Year(), day.Date.Month(), day.Date.Day(), 10, 0, 0, 0, time.UTC)
-			// Generate ticks. Let's simulate a tick arriving every 5 seconds of market time.
-			// Total market duration = 6 hours 15 mins = 22,500 seconds.
-			// 22500 / 5 = 4500 ticks per day.
-			tickInterval := 5 * time.Second
-			currentTickTime := marketOpen
+		// Simulated high-frequency internal tick rate (always 5 seconds)
+		tickInterval := 5 * time.Second
+		currentTickTime := marketOpen
+		rollingPrice := day.Open
 
-			// Set the initial rolling price to the Day's Open Price
-			rollingPrice := day.Open
+		tradesPerTick := uint32(day.NoOfTrades / 4500)
+		if tradesPerTick == 0 {
+			tradesPerTick = 1
+		}
 
-			// Split the total daily trades across our generated ticks safely
-			tradesPerStick := uint32(day.NoOfTrades / 4500)
-			if tradesPerStick == 0 {
-				tradesPerStick = 1
+		// Running aggregation state variables for building dynamic bars
+		var currentBarOpen, currentBarHigh, currentBarLow, currentBarClose float64
+		var currentBarVolume uint64
+		var runningVwapSum float64
+		var currentBarStartTime time.Time
+		isBarInitialized := false
+
+		for currentTickTime.Before(marketClose) || currentTickTime.Equal(marketClose) {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
 
-			for currentTickTime.Before(marketClose) || currentTickTime.Equal(marketClose) {
-				// 1. High-Performance Context Safety check
-				select {
-				case <-ctx.Done():
-					return ctx.Err() // Kill execution immediately if client drops out
-				default:
-				}
-				var tickPrice float64
-				if currentTickTime.Equal(marketOpen) {
-					tickPrice = day.Open
-				} else if currentTickTime.Equal(marketClose) {
-					tickPrice = day.Close
-				} else {
-					// Generate a random walk deviation bounded between -0.5% and +0.5%
-					percentageChange := (r.Float64() * 0.01) - 0.005
-					rollingPrice = rollingPrice * (1.0 + percentageChange)
+			// 1. Compute individual tick coordinates
+			var tickPrice float64
+			if currentTickTime.Equal(marketOpen) {
+				tickPrice = day.Open
+			} else if currentTickTime.Equal(marketClose) {
+				tickPrice = day.Close
+			} else {
+				percentageChange := (r.Float64() * 0.01) - 0.005
+				rollingPrice = rollingPrice * (1.0 + percentageChange)
 
-					// Strict Clamping Rule: Ensure the random value never breaches historical bounds
-					if rollingPrice > day.High {
-						rollingPrice = day.High
-					}
-					if rollingPrice < day.Low {
-						rollingPrice = day.Low
-					}
-					tickPrice = rollingPrice
+				if rollingPrice > day.High {
+					rollingPrice = day.High
+				}
+				if rollingPrice < day.Low {
+					rollingPrice = day.Low
+				}
+				tickPrice = rollingPrice
+			}
+
+			if returnBar {
+				// Initialize the aggregation window tracking anchors if needed
+				if !isBarInitialized {
+					currentBarStartTime = currentTickTime
+					currentBarOpen = tickPrice
+					currentBarHigh = tickPrice
+					currentBarLow = tickPrice
+					currentBarVolume = 0
+					runningVwapSum = 0
+					isBarInitialized = true
 				}
 
+				// Aggregate tick parameters into the active candlestick metrics
+				if tickPrice > currentBarHigh {
+					currentBarHigh = tickPrice
+				}
+				if tickPrice < currentBarLow {
+					currentBarLow = tickPrice
+				}
+				currentBarClose = tickPrice
+				currentBarVolume += uint64(tradesPerTick)
+				runningVwapSum += tickPrice * float64(tradesPerTick)
+
+				// Determine if the current tick sits on or breaks a resolution time boundary
+				nextTickTime := currentTickTime.Add(tickInterval)
+				isPeriodEnd := nextTickTime.After(currentBarStartTime.Add(resolutionDuration)) || currentTickTime.Equal(marketClose)
+
+				if isPeriodEnd {
+					vwap := currentBarClose
+					if currentBarVolume > 0 {
+						vwap = runningVwapSum / float64(currentBarVolume)
+					}
+
+					resp := &pb.StreamMarketDataResponse{
+						Symbol:         day.Symbol,
+						SequenceNumber: sequenceNumber,
+						Timestamp:      timestamppb.New(currentTickTime), // Close timestamp anchor
+						Payload: &pb.StreamMarketDataResponse_Bar{
+							Bar: &pb.BarData{
+								Open:   currentBarOpen,
+								High:   currentBarHigh,
+								Low:    currentBarLow,
+								Close:  currentBarClose,
+								Volume: currentBarVolume,
+								Vwap:   vwap,
+							},
+						},
+					}
+
+					if err := stream.Send(resp); err != nil {
+						return connect.NewError(connect.CodeUnavailable, fmt.Errorf("failed to send bar stream: %w", err))
+					}
+					sequenceNumber++
+					isBarInitialized = false // Reset block state for subsequent cycle processing
+
+					// Pacing control based on the user's resolution requirements
+					sleepDuration := time.Duration(float64(resolutionDuration.Milliseconds())/float64(req.PlaybackSpeedMultiplier)) * time.Microsecond
+					if sleepDuration > 0 {
+						time.Sleep(sleepDuration)
+					}
+				}
+
+			} else {
+				// Default mode: Return individual standard sub-second raw tick entities
 				resp := &pb.StreamMarketDataResponse{
 					Symbol:         day.Symbol,
 					SequenceNumber: sequenceNumber,
@@ -100,73 +206,80 @@ func (s *MarketDataServer) StreamMarketData(ctx context.Context, req *pb.StreamM
 							BidPrice:       tickPrice - 0.05,
 							AskPrice:       tickPrice + 0.05,
 							LastTradePrice: tickPrice,
-							LastTradeSize:  tradesPerStick,
+							LastTradeSize:  tradesPerTick,
 						},
 					},
 				}
-				slog.Debug("sent tick", "symbol", day.Symbol, "sequenceNumber", sequenceNumber, "timestamp", currentTickTime)
-				// 4. Send packet down the wire
+
 				if err := stream.Send(resp); err != nil {
 					return connect.NewError(connect.CodeUnavailable, fmt.Errorf("failed to send tick stream: %w", err))
 				}
 				sequenceNumber++
 
-				// 5. Playback speed management
-				// A multiplier of 1.0 means we scale down the 5-second interval to a brief pause (e.g., 1 millisecond)
-				// to allow the simulation engine to process a full day in a few seconds.
 				sleepDuration := time.Duration(float64(tickInterval.Milliseconds())/float64(req.PlaybackSpeedMultiplier)) * time.Microsecond
 				if sleepDuration > 0 {
 					time.Sleep(sleepDuration)
 				}
-				currentTickTime = currentTickTime.Add(tickInterval)
 			}
+
+			currentTickTime = currentTickTime.Add(tickInterval)
 		}
 	}
+
+	for err := range errChan {
+		if err != nil {
+			return connect.NewError(connect.CodeNotFound, fmt.Errorf("underlying concurrency data failure: %w", err))
+		}
+	}
+
 	return nil
 }
 
-func (s *MarketDataServer) parseCSVAndFilter(filepath, symbol string, startDate, endDate time.Time) ([]DailyBar, error) {
-
+func (s *MarketDataServer) streamAndFilterCSV(ctx context.Context, filepath, symbol string, startDate, endDate time.Time, out chan<- DailyBar) error {
 	file, err := os.Open(filepath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer file.Close()
 
 	r := bufio.NewReader(file)
-	// Peek and strip UTF-8 BOM
 	bom, err := r.Peek(3)
 	if err == nil && len(bom) == 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF {
 		r.Discard(3)
 	}
 
 	reader := csv.NewReader(r)
-	// Handling row headers
-	_, err = reader.Read()
-	if err != nil {
-		return nil, err
+	if _, err = reader.Read(); err != nil {
+		return err
 	}
 
-	var validDays []DailyBar
+	var filteredDays []DailyBar
+
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		row, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
+
 		dateStr := strings.TrimSpace(row[2])
 		parsedDate, err := time.Parse("02-Jan-2006", dateStr)
 		if err != nil {
-			continue // Skip corrupt or misformatted data entries safely
+			continue
 		}
 
 		if parsedDate.Before(startDate) || parsedDate.After(endDate) {
-			continue // Skip dates outside the requested range
+			continue
 		}
 
-		// Helper to sanitize fields containing commas like "22,30,098" or "1,786.90"
 		cleanFloat := func(field string) float64 {
 			c := strings.ReplaceAll(strings.TrimSpace(field), ",", "")
 			val, _ := strconv.ParseFloat(c, 64)
@@ -191,10 +304,26 @@ func (s *MarketDataServer) parseCSVAndFilter(filepath, symbol string, startDate,
 			Volume:       cleanUint(row[10]),
 			NoOfTrades:   cleanUint(row[12]),
 		}
-		// reverse append to maintain chronological order
-		validDays = append([]DailyBar{bar}, validDays...)
+
+		filteredDays = append(filteredDays, bar)
 	}
 
-	return validDays, nil
+	slices.SortFunc(filteredDays, func(a, b DailyBar) int {
+		if a.Date.Before(b.Date) {
+			return -1
+		}
+		if a.Date.After(b.Date) {
+			return 1
+		}
+		return 0
+	})
 
+	for _, bar := range filteredDays {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- bar:
+		}
+	}
+	return nil
 }
